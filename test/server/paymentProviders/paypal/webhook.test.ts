@@ -12,7 +12,6 @@ import {
   fakeHost,
   fakeOrder,
   fakePaymentMethod,
-  randStr,
 } from '../../../test-helpers/fake-data';
 
 describe('server/paymentProviders/paypal/webhook', () => {
@@ -44,11 +43,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
 
     it('fails if collective has no host', async () => {
       const collective = await fakeCollective({ HostCollectiveId: null });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
       });
       await expect(
         callPaymentSaleCompleted({ resource: { billing_agreement_id: order.data.paypalSubscriptionId } }),
@@ -58,11 +56,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
     it('fails if host does not have PayPal', async () => {
       const host = await fakeHost();
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
       });
       await expect(
         callPaymentSaleCompleted({ resource: { billing_agreement_id: order.data.paypalSubscriptionId } }),
@@ -73,11 +70,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
       const host = await fakeHost();
       await fakeConnectedAccount({ CollectiveId: host.id, service: 'paypal', token: 'xxxxxx' });
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
       });
 
       sandbox.stub(PaypalLib, 'validateWebhookEvent').rejects(new Error('Invalid webhook request'));
@@ -90,11 +86,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
       const host = await fakeHost();
       await fakeConnectedAccount({ CollectiveId: host.id, service: 'paypal', token: 'xxxxxx' });
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
         status: 'PENDING',
       });
 
@@ -130,11 +125,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
 
     it('fails if collective has no host', async () => {
       const collective = await fakeCollective({ HostCollectiveId: null });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
       });
       await expect(callSubscriptionCancelled({ resource: { id: order.data.paypalSubscriptionId } })).to.be.rejectedWith(
         'PayPal webhook: no host found',
@@ -144,11 +138,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
     it('fails if host does not have PayPal', async () => {
       const host = await fakeHost();
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
       });
       await expect(callSubscriptionCancelled({ resource: { id: order.data.paypalSubscriptionId } })).to.be.rejectedWith(
         `Host ${host.slug} is not connected to PayPal`,
@@ -159,11 +152,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
       const host = await fakeHost();
       await fakeConnectedAccount({ CollectiveId: host.id, service: 'paypal', token: 'xxxxxx' });
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
       });
 
       sandbox.stub(PaypalLib, 'validateWebhookEvent').rejects(new Error('Invalid webhook request'));
@@ -176,11 +168,10 @@ describe('server/paymentProviders/paypal/webhook', () => {
       const host = await fakeHost();
       await fakeConnectedAccount({ CollectiveId: host.id, service: 'paypal', token: 'xxxxxx' });
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'payment' });
+      const paymentMethod = await fakePaymentMethod({ service: 'paypal', type: 'subscription' });
       const order = await fakeOrder({
         PaymentMethodId: paymentMethod.id,
         CollectiveId: collective.id,
-        data: { paypalSubscriptionId: randStr() },
         status: 'ACTIVE',
       });
 

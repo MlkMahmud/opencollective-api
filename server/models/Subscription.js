@@ -44,6 +44,10 @@ function defineModel() {
 
       stripeSubscriptionId: DataTypes.STRING,
 
+      paypalSubscriptionId: { type: DataTypes.STRING, allowNull: true },
+
+      isManagedExternally: { type: DataTypes.BOOLEAN, defaultValue: false },
+
       activatedAt: DataTypes.DATE,
 
       deactivatedAt: DataTypes.DATE,

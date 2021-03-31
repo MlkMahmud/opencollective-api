@@ -1,11 +1,19 @@
 import { GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
-import { isNil, isNull, isUndefined } from 'lodash';
+import { isNil, isUndefined } from 'lodash';
 
 import activities from '../../../constants/activities';
 import status from '../../../constants/order_status';
-import { PAYMENT_METHOD_SERVICE, PAYMENT_METHOD_TYPE } from '../../../constants/paymentMethods';
+import { PAYMENT_METHOD_SERVICE } from '../../../constants/paymentMethods';
+import {
+  updatePaymentMethodForSubscription,
+  updateSubscriptionDetails,
+  updateSubscriptionWithPaypal,
+} from '../../../lib/subscriptions';
 import models from '../../../models';
-import { cancelPaypalSubscription } from '../../../paymentProviders/paypal/payment';
+import {
+  cancelPaypalSubscription,
+  isPaypalSubscriptionPaymentMethod,
+} from '../../../paymentProviders/paypal/subscription';
 import { BadRequest, NotFound, Unauthorized, ValidationFailed } from '../../errors';
 import { confirmOrder as confirmOrderLegacy, createOrder as createOrderLegacy } from '../../v1/mutations/orders';
 import { getIntervalFromContributionFrequency } from '../enum/ContributionFrequency';
@@ -145,20 +153,12 @@ const orderMutations = {
 
       // If subscription exists on a third party, cancel it there
       const { paymentMethod } = order;
-      if (paymentMethod) {
-        if (
-          paymentMethod.service === PAYMENT_METHOD_SERVICE.PAYPAL &&
-          paymentMethod.type === PAYMENT_METHOD_TYPE.PAYMENT &&
-          order.data?.paypalSubscriptionId
-        ) {
-          await cancelPaypalSubscription(order.data.paypalSubscriptionId);
-        }
+      if (isPaypalSubscriptionPaymentMethod(paymentMethod)) {
+        await cancelPaypalSubscription(order);
       }
 
       await order.update({ status: status.CANCELLED });
-      if (order.Subscription) {
-        await order.Subscription.deactivate();
-      }
+      await order.Subscription.deactivate();
 
       await models.Activity.create({
         type: activities.SUBSCRIPTION_CANCELED,
@@ -187,6 +187,10 @@ const orderMutations = {
         type: PaymentMethodReferenceInput,
         description: 'Reference to a Payment Method to update the order with',
       },
+      paypalSubscriptionId: {
+        type: GraphQLString,
+        description: 'To update the order with a PayPal subscription',
+      },
       tier: {
         type: TierReferenceInput,
         description: 'Reference to a Tier to update the order with',
@@ -198,100 +202,47 @@ const orderMutations = {
     },
     async resolve(_, args, req) {
       const decodedId = getDecodedId(args.order.id);
+      const hasAmountChange = !isUndefined(args.amount) && !isUndefined(args.tier);
+      const hasPaymentMethodChange = !isUndefined(args.paymentMethod) || args.paypalSubscriptionId;
 
       if (!req.remoteUser) {
         throw new Unauthorized('You need to be logged in to update a order');
       }
 
-      const query = {
-        where: {
-          id: decodedId,
-        },
-        include: [{ model: models.Subscription }],
-      };
+      const order = await models.Order.findOne({
+        where: { id: decodedId },
+        include: [
+          { model: models.Subscription, required: true },
+          { association: 'collective', required: true },
+          { association: 'fromCollective', required: true },
+          { association: 'paymentMethod' },
+        ],
+      });
 
-      let order = await models.Order.findOne(query);
-
-      if (!order) {
-        throw new NotFound('Order not found');
-      }
-
-      const fromCollective = await req.loaders.Collective.byId.load(order.FromCollectiveId);
-      if (!req.remoteUser.isAdminOfCollective(fromCollective)) {
+      if (!req.remoteUser.isAdminOfCollective(order.fromCollective)) {
         throw new Unauthorized("You don't have permission to update this order");
-      }
-      if (!order.Subscription.isActive) {
+      } else if (!order.Subscription.isActive) {
         throw new Error('Order must be active to be updated');
+      } else if (args.paypalSubscriptionId && args.paymentMethod) {
+        throw new Error('paypalSubscriptionId and paymentMethod are mutually exclusive');
+      } else if (hasAmountChange && hasPaymentMethodChange) {
+        throw new Error(
+          'Amount and payment method cannot be updated at the same time, please update one after the other',
+        );
       }
 
-      // payment method
-      if (!isUndefined(args.paymentMethod)) {
-        // unlike v1 we don't have to check/assign new payment method, that will be taken care of in another mutation
+      if (args.paypalSubscriptionId) {
+        // Update from PayPal subscription ID
+        return updateSubscriptionWithPaypal(req.remoteUser, order, args.paypalSubscriptionId);
+      } else if (hasPaymentMethodChange) {
+        // Update payment method
         const newPaymentMethod = await fetchPaymentMethodWithReference(args.paymentMethod);
-
-        const newPaymentMethodCollective = await req.loaders.Collective.byId.load(newPaymentMethod.CollectiveId);
-        if (!req.remoteUser.isAdminOfCollective(newPaymentMethodCollective)) {
-          throw new Unauthorized("You don't have permission to use this payment method");
-        }
-
-        const newStatus = order.status === status.ERROR ? status.ACTIVE : order.status;
-        order = await order.update({ PaymentMethodId: newPaymentMethod.id, status: newStatus });
-      }
-
-      // amount and tier (will always go together, unnamed tiers are NULL)
-      if (!isUndefined(args.amount) && !isUndefined(args.tier)) {
-        let tierInfo;
-
-        // get tier info if it's a named tier
-        if (!isNull(args.tier.id)) {
-          tierInfo = await fetchTierWithReference(args.tier, { throwIfMissing: true });
-          if (!tierInfo) {
-            throw new Error(`No tier found with tier id: ${args.tier.id} for collective ${order.CollectiveId}`);
-          } else if (tierInfo.CollectiveId !== order.CollectiveId) {
-            throw new Error(
-              `This tier (#${tierInfo.id}) doesn't belong to the given Collective #${order.CollectiveId}`,
-            );
-          }
-        }
-
-        const amountInCents = getValueInCentsFromAmountInput(args.amount);
-
-        // The amount can never be less than $1.00
-        if (amountInCents < 100) {
-          throw new Error('Invalid amount.');
-        }
-
-        // If using a named tier, amount can never be less than the minimum amount
-        if (tierInfo && tierInfo.amountType === 'FLEXIBLE' && amountInCents < tierInfo.minimumAmount) {
-          throw new Error('Amount is less than minimum value allowed for this Tier.');
-        }
-
-        // If using a FIXED tier, amount cannot be different from the tier's amount
-        // TODO: it should be amountInCents !== tierInfo.amount, but we need to do work to make sure that would play well with platform fees/taxes
-        if (tierInfo && tierInfo.amountType === 'FIXED' && amountInCents < tierInfo.amount) {
-          throw new Error('Amount is incorrect for this Tier.');
-        }
-
-        // check if the amount is different from the previous amount - update subscription as well
-        if (amountInCents !== order.totalAmount) {
-          order = await order.update({ totalAmount: amountInCents });
-          order.Subscription = await order.Subscription.update({ amount: amountInCents });
-        }
-
-        // Update interval
-        let newInterval = order.interval;
-        if (tierInfo?.interval && tierInfo.interval !== 'flexible') {
-          newInterval = tierInfo.interval;
-        }
-
-        if (newInterval !== order.interval) {
-          order = await order.update({ interval: newInterval });
-          order.Subscription = await order.Subscription.update({ interval: newInterval });
-        }
-
-        // Custom contribution is null, named tier will be tierInfo.id
-        const tierToUpdateWith = tierInfo ? tierInfo.id : null;
-        order = await order.update({ TierId: tierToUpdateWith });
+        return updatePaymentMethodForSubscription(req.remoteUser, order, newPaymentMethod);
+      } else if (hasAmountChange) {
+        // Update details (eg. amount, tier)
+        const tier = args.tier.id && (await fetchTierWithReference(args.tier, { throwIfMissing: true }));
+        const newAmount = getValueInCentsFromAmountInput(args.amount);
+        return updateSubscriptionDetails(req.remoteUser, order, tier, newAmount);
       }
 
       return order;

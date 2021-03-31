@@ -1,6 +1,7 @@
 import Debug from 'debug';
 import { Request } from 'express';
 import { get, toNumber } from 'lodash';
+import moment from 'moment';
 
 import OrderStatus from '../../constants/order_status';
 import logger from '../../lib/logger';
@@ -54,15 +55,19 @@ async function handlePayoutTransactionUpdate(req: Request): Promise<void> {
  */
 const loadSubscriptionForWebhookEvent = async (req: Request, subscriptionId: string) => {
   const order = await models.Order.findOne({
-    where: { data: { paypalSubscriptionId: subscriptionId } }, // TODO: Add index on paypalSubscriptionId
     include: [
       { association: 'fromCollective' },
       { association: 'createdByUser' },
       { association: 'collective', required: true },
       {
+        association: 'Subscription',
+        required: true,
+        where: { paypalSubscriptionId: subscriptionId },
+      },
+      {
         association: 'paymentMethod',
         required: true,
-        where: { service: 'paypal', type: 'payment' },
+        where: { service: 'paypal', type: 'subscription' },
       },
     ],
   });
@@ -96,7 +101,12 @@ async function handleSaleCompleted(req: Request): Promise<void> {
 
   // 3. Mark order as active
   if (order.status !== OrderStatus.ACTIVE) {
-    await order.update({ status: OrderStatus.ACTIVE });
+    await order.update({ status: OrderStatus.ACTIVE, processedAt: new Date() });
+    await order.Subscription.update({
+      chargeNumber: order.Subscription.chargeNumber + 1,
+      nextChargeDate: moment().add(1, order.interval),
+      isActive: true,
+    });
   }
 
   // 4. Send thankyou email
@@ -115,10 +125,20 @@ async function handleSubscriptionCancelled(req: Request): Promise<void> {
   const subscription = req.body.resource;
   const { order } = await loadSubscriptionForWebhookEvent(req, subscription.id);
   if (order.status !== OrderStatus.CANCELLED) {
+    // TODO Update subscription
     await order.update({
       status: OrderStatus.CANCELLED,
       data: { ...order.data, paypalStatusChangeNote: subscription.status_change_note },
     });
+  }
+}
+
+async function handleSubscriptionActivated(req: Request): Promise<void> {
+  const subscription = req.body.resource;
+  const email = subscription.subscriber?.email_address;
+  if (email) {
+    const { order } = await loadSubscriptionForWebhookEvent(req, subscription.id);
+    await order.paymentMethod.update({ name: email });
   }
 }
 
@@ -133,6 +153,8 @@ async function webhook(req: Request): Promise<void> {
     case 'BILLING.SUBSCRIPTION.CANCELLED':
     case 'BILLING.SUBSCRIPTION.SUSPENDED':
       return handleSubscriptionCancelled(req);
+    case 'BILLING.SUBSCRIPTION.ACTIVATED':
+      return handleSubscriptionActivated(req);
     default:
       logger.info(`Received unhandled PayPal event (${eventType}), ignoring it.`);
       break;

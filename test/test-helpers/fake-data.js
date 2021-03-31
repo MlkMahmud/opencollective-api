@@ -517,3 +517,28 @@ export const fakeVirtualCard = async (virtualCardData = {}) => {
     HostCollectiveId,
   });
 };
+
+export const fakePaypalProduct = async (data = {}) => {
+  const CollectiveId = data.CollectiveId || (await fakeCollective()).id;
+  return models.PaypalProduct.create({
+    id: randStr('PaypalProduct-'),
+    ...data,
+    CollectiveId,
+  });
+};
+
+export const fakePaypalPlan = async (data = {}) => {
+  const product = data.ProductId
+    ? await models.PaypalProduct.findByPk(data.ProductId)
+    : await fakePaypalProduct(data.product || {});
+
+  const collective = await models.Collective.findByPk(product.CollectiveId);
+  return models.PaypalPlan.create({
+    currency: collective.currency || 'USD',
+    interval: sample(['month', 'year']),
+    amount: randAmount(),
+    id: randStr('PaypalPlan-'),
+    ...data,
+    ProductId: product.id,
+  });
+};

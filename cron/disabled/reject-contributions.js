@@ -147,6 +147,7 @@ async function run({ dryRun, limit, force } = {}) {
       const subscription = await models.Subscription.findByPk(order.SubscriptionId);
       if (subscription) {
         logger.info(`  - Deactivating subscription #${order.SubscriptionId}`);
+        // TODO cancel on PayPal
         if (!dryRun) {
           await subscription.deactivate();
         }
