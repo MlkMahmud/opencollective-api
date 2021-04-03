@@ -87,7 +87,7 @@ export const buildSanitizerOptions = (allowedContent: AllowedContentType = {}): 
   // IFrames
   if (allowedContent.videoIframes) {
     allowedTags.push('iframe');
-    allowedIframeHostnames.push('www.youtube.com', 'www.youtube-nocookie.com', 'player.vimeo.com', 'www.anchor.fm');
+    allowedIframeHostnames.push('www.youtube.com', 'www.youtube-nocookie.com', 'player.vimeo.com', 'anchor.fm');
     allowedAttributes['iframe'] = [
       'src',
       'allowfullscreen',
